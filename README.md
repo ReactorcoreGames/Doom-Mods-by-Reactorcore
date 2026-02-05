@@ -1,5 +1,7 @@
 # Doom Mods by Reactorcore
 
+![collageZmodsbyRC_img](https://github.com/user-attachments/assets/755da603-eba1-4887-9d06-fd94d25aef2c)
+
 A collection of gameplay-enhancing mini mods for GZDoom that add various cool abilities. They work with any other Doom II mod out there.
 
 ## Mods Included
