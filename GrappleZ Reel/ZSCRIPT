@@ -1,0 +1,827 @@
+version "4.10.0"
+
+// ============================================================================
+// GRAPPLEZ REEL - Advanced Grappling Hook System
+// ============================================================================
+
+// Hook state tracking for each player
+enum EHookState
+{
+    HOOK_IDLE,       // No hook active
+    HOOK_FLYING,     // Hook projectile in flight
+    HOOK_LATCHED,    // Hook attached and pulling
+    HOOK_CANCELLED   // Hook detaching
+}
+
+// Weight classes for enemy pulling
+enum EWeightClass
+{
+    WEIGHT_LIGHT,    // Fast pull toward player
+    WEIGHT_MEDIUM,   // Medium pull toward player
+    WEIGHT_HEAVY     // Pull player toward enemy
+}
+
+// ============================================================================
+// GRAPPLEZ REEL HANDLER - Main Event Handler
+// ============================================================================
+
+class GrappleZHandler : StaticEventHandler
+{
+    // Per-player hook state tracking
+    Array<int> playerHookStates;  // Store enum as int for Array compatibility
+    Array<Actor> playerHooks;  // Reference to active hook actor
+    Array<double> playerHookOriginX;  // Origin X coordinate for range tracking
+    Array<double> playerHookOriginY;  // Origin Y coordinate for range tracking
+    Array<double> playerHookOriginZ;  // Origin Z coordinate for range tracking
+
+    // Visual trail management
+    const TRAIL_COUNT = 10;
+    Array<Actor> allTrails;  // Flat array: [p0_trail0..p0_trail9, p1_trail0..p1_trail9, ...]
+
+    // Helper to get trail index: playerNum * TRAIL_COUNT + trailNum
+    int GetTrailIndex(int pNum, int trailNum)
+    {
+        return pNum * TRAIL_COUNT + trailNum;
+    }
+
+    override void OnRegister()
+    {
+        // Console.Printf("GrappleZ: Handler registered");
+
+        // Initialize arrays for all players
+        playerHookStates.Clear();
+        playerHooks.Clear();
+        playerHookOriginX.Clear();
+        playerHookOriginY.Clear();
+        playerHookOriginZ.Clear();
+        allTrails.Clear();
+
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            playerHookStates.Push(HOOK_IDLE);
+            playerHooks.Push(null);
+            playerHookOriginX.Push(0.0);
+            playerHookOriginY.Push(0.0);
+            playerHookOriginZ.Push(0.0);
+
+            // Initialize trail slots for each player
+            for (int j = 0; j < TRAIL_COUNT; j++)
+            {
+                allTrails.Push(null);
+            }
+        }
+    }
+
+    override void WorldLoaded(WorldEvent e)
+    {
+        // Console.Printf("GrappleZ: Map loaded - resetting all hooks");
+
+        // Reset all hooks when a new map loads
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (i < playerHookStates.Size())
+            {
+                playerHookStates[i] = HOOK_IDLE;
+                playerHooks[i] = null;
+            }
+        }
+    }
+
+    override void WorldTick()
+    {
+        // Update all active hooks
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (!playeringame[i])
+                continue;
+
+            PlayerInfo player = players[i];
+            if (!player || !player.mo)
+                continue;
+
+            int state = playerHookStates[i];
+
+            if (state == HOOK_FLYING)
+            {
+                UpdateFlyingHook(i, player);
+
+                // Update trail visual positions during flight
+                Actor hook = playerHooks[i];
+                if (hook && !hook.bDESTROYED)
+                {
+                    UpdateTrailPositions(i, player.mo, hook);
+                }
+            }
+            else if (state == HOOK_LATCHED)
+            {
+                UpdateLatchedHook(i, player);
+
+                // Update trail visual positions
+                Actor hook = playerHooks[i];
+                if (hook && !hook.bDESTROYED)
+                {
+                    UpdateTrailPositions(i, player.mo, hook);
+                }
+            }
+        }
+    }
+
+    override void NetworkProcess(ConsoleEvent e)
+    {
+        if (e.Name == "grapplez_toggle")
+        {
+            if (!playeringame[e.Player])
+                return;
+
+            PlayerInfo player = players[e.Player];
+            if (!player || !player.mo)
+                return;
+
+            // Check if grapple is allowed via CVar
+            CVar allowCVar = CVar.GetCVar('sv_allowhookshot', player);
+            if (allowCVar && !allowCVar.GetBool())
+                return;
+
+            int pNum = e.Player;
+            int currentState = playerHookStates[pNum];
+            // Console.Printf("GrappleZ: Key pressed, current state = %d", currentState);
+
+            if (currentState == HOOK_IDLE)
+            {
+                // Fire new hook
+                FireHook(pNum, player);
+            }
+            else if (currentState == HOOK_LATCHED)
+            {
+                // Cancel active hook
+                CancelHook(pNum);
+            }
+            // Note: Cannot cancel while FLYING
+        }
+    }
+
+    void FireHook(int pNum, PlayerInfo player)
+    {
+        // Destroy any existing hook first
+        Actor oldHook = playerHooks[pNum];
+        if (oldHook && !oldHook.bDESTROYED)
+        {
+            // Console.Printf("GrappleZ: Destroying old hook before firing new one");
+            oldHook.Destroy();
+        }
+
+        // Store origin point
+        playerHookOriginX[pNum] = player.mo.pos.x;
+        playerHookOriginY[pNum] = player.mo.pos.y;
+        playerHookOriginZ[pNum] = player.mo.pos.z;
+
+        // Change state to FLYING
+        playerHookStates[pNum] = HOOK_FLYING;
+        playerHooks[pNum] = null;
+        // Console.Printf("GrappleZ: Hook fired, state = FLYING");
+
+        // Spawn trail actors for flying hook
+        SpawnTrailActors(pNum);
+
+        // Give player the HookShooter which fires the projectile
+        player.mo.GiveInventory("HookShooter", 1);
+    }
+
+    void UpdateFlyingHook(int pNum, PlayerInfo player)
+    {
+        Actor hook = playerHooks[pNum];
+
+        // Find the hook if we don't have reference yet
+        if (!hook)
+        {
+            // Search for player's hook projectile
+            ThinkerIterator it = ThinkerIterator.Create("HookShot");
+            Actor mo;
+            while (mo = Actor(it.Next()))
+            {
+                if (mo.target == player.mo)
+                {
+                    playerHooks[pNum] = mo;
+                    hook = mo;
+                    break;
+                }
+            }
+        }
+
+        // Null safety
+        if (!hook || hook.bDESTROYED)
+        {
+            DestroyTrailActors(pNum);
+            playerHookStates[pNum] = HOOK_IDLE;
+            playerHooks[pNum] = null;
+            return;
+        }
+
+        // Check max range
+        CVar maxRangeCVar = CVar.GetCVar('grapplez_max_range', player);
+        double maxRange = maxRangeCVar ? maxRangeCVar.GetFloat() : 2048.0;
+
+        // Calculate 3D distance from origin point (includes Z axis)
+        double dx = hook.pos.x - playerHookOriginX[pNum];
+        double dy = hook.pos.y - playerHookOriginY[pNum];
+        double dz = hook.pos.z - playerHookOriginZ[pNum];
+        double distFromOrigin = sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (distFromOrigin > maxRange)
+        {
+            // Destroy hook - exceeded range
+            // Console.Printf("GrappleZ: Hook exceeded max range (%.1f > %.1f)", distFromOrigin, maxRange);
+            hook.Destroy();
+            DestroyTrailActors(pNum);
+            playerHookStates[pNum] = HOOK_IDLE;
+            playerHooks[pNum] = null;
+        }
+    }
+
+    void UpdateLatchedHook(int pNum, PlayerInfo player)
+    {
+        Actor hook = playerHooks[pNum];
+
+        // Null safety
+        if (!hook || hook.bDESTROYED)
+        {
+            // Console.Printf("GrappleZ: Hook lost (null or destroyed)");
+            DetachHook(pNum);
+            return;
+        }
+
+
+        if (!player.mo)
+        {
+            DetachHook(pNum);
+            return;
+        }
+
+        // Check if hooked enemy was killed
+        HookShot hookshot = HookShot(hook);
+        if (hookshot && hookshot.hookedEnemy)
+        {
+            Actor enemy = hookshot.hookedEnemy;
+
+            if (enemy.bDESTROYED || enemy.Health <= 0)
+            {
+                DetachHook(pNum);
+                return;
+            }
+
+            // Check line of sight between player and hooked enemy
+            if (!player.mo.CheckSight(enemy))
+            {
+                // Console.Printf("GrappleZ: Lost line of sight with hooked enemy - detaching but preserving momentum");
+                // Don't call DetachHook which destroys the hook
+                // Just mark as IDLE so enemy keeps its velocity
+                DestroyTrailActors(pNum);
+                playerHookStates[pNum] = HOOK_IDLE;
+                playerHooks[pNum] = null;
+                // Destroy the hook visual but enemy keeps moving
+                hook.Destroy();
+                return;
+            }
+
+            // CRITICAL FIX: Make the hook follow the hooked enemy
+            // This prevents the "magnetized to hook position" bug
+            hook.SetOrigin((enemy.pos.x, enemy.pos.y, enemy.pos.z + enemy.height * 0.5), false);
+        }
+
+        // Check proximity detachment using 3D distance
+        CVar detachDistCVar = CVar.GetCVar('grapplez_detach_distance', player);
+        double detachDist = detachDistCVar ? detachDistCVar.GetFloat() : 64.0;
+
+        double dist = player.mo.Distance3D(hook);
+        if (dist < detachDist)
+        {
+            // Console.Printf("GrappleZ: Proximity detach - dist=%.1f, threshold=%.1f", dist, detachDist);
+            DetachHook(pNum);
+            return;
+        }
+
+        // Apply continuous pull
+        ApplyPullLogic(pNum, player, hook);
+    }
+
+    void ApplyPullLogic(int pNum, PlayerInfo player, Actor hook)
+    {
+        // Console.Printf("GrappleZ: ApplyPullLogic called");
+
+        HookShot hookshot = HookShot(hook);
+        if (!hookshot)
+        {
+            // Console.Printf("GrappleZ: Failed to cast hook to HookShot");
+            return;
+        }
+
+        // Get CVars
+        CVar pullModeCVar = CVar.GetCVar('grapplez_pull_mode', player);
+        int pullMode = pullModeCVar ? pullModeCVar.GetInt() : 0;
+
+        CVar weightCalcCVar = CVar.GetCVar('grapplez_weight_calculation', player);
+        int weightCalcMethod = weightCalcCVar ? weightCalcCVar.GetInt() : 0;
+
+        CVar wallStrengthCVar = CVar.GetCVar('grapplez_wall_pull_strength', player);
+        double wallStrength = wallStrengthCVar ? wallStrengthCVar.GetFloat() : 1.0;
+
+        CVar enemyStrengthCVar = CVar.GetCVar('grapplez_enemy_pull_strength', player);
+        double enemyStrength = enemyStrengthCVar ? enemyStrengthCVar.GetFloat() : 1.0;
+
+        // Check if we hooked an enemy or terrain
+        if (hookshot.hookedEnemy && !hookshot.hookedEnemy.bDESTROYED)
+        {
+            // Hooked an enemy - apply weight-based pulling
+            Actor enemy = hookshot.hookedEnemy;
+            double weight = GetActorWeight(enemy, weightCalcMethod == 1);
+            int weightClass = GetWeightClass(player, weight);
+
+            // Console.Printf("GrappleZ: Enemy=%s, Mass=%.1f, Weight=%.1f, WeightClass=%d",
+            //     enemy.GetClassName(), enemy.Mass, weight, weightClass);
+
+            // Determine pull direction based on mode and weight
+            bool pullPlayerToEnemy = false;
+
+            if (pullMode == 0) // Smart Pull
+            {
+                pullPlayerToEnemy = (weightClass == WEIGHT_HEAVY);
+            }
+            else if (pullMode == 1) // Always Pull Enemy
+            {
+                pullPlayerToEnemy = false;
+            }
+            else if (pullMode == 2) // Always Pull Player
+            {
+                pullPlayerToEnemy = true;
+            }
+
+            // Console.Printf("GrappleZ: PullMode=%d, PullPlayerToEnemy=%d", pullMode, pullPlayerToEnemy);
+
+            if (pullPlayerToEnemy)
+            {
+                // Pull player toward enemy
+                // Console.Printf("GrappleZ: Pulling PLAYER to enemy");
+                ApplyPullToPlayer(player.mo, enemy.pos, wallStrength);
+            }
+            else
+            {
+                // Pull enemy toward player
+                // Console.Printf("GrappleZ: Pulling ENEMY to player");
+                double scaledStrength = CalculatePullStrength(weight, enemyStrength, weightClass);
+                ApplyPullToEnemy(enemy, player.mo.pos, scaledStrength);
+            }
+        }
+        else
+        {
+            // Hooked terrain - pull player toward hook
+            ApplyPullToPlayer(player.mo, hook.pos, wallStrength);
+        }
+    }
+
+    double GetActorWeight(Actor a, bool useHealth)
+    {
+        if (useHealth)
+        {
+            return a.SpawnHealth();
+        }
+        else
+        {
+            return a.Mass;
+        }
+    }
+
+    int GetWeightClass(PlayerInfo player, double weight)
+    {
+        CVar lightThreshCVar = CVar.GetCVar('grapplez_light_threshold', player);
+        double lightThresh = lightThreshCVar ? lightThreshCVar.GetFloat() : 550.0;
+
+        CVar heavyThreshCVar = CVar.GetCVar('grapplez_heavy_threshold', player);
+        double heavyThresh = heavyThreshCVar ? heavyThreshCVar.GetFloat() : 900.0;
+
+        if (weight < lightThresh)
+            return WEIGHT_LIGHT;
+        else if (weight < heavyThresh)
+            return WEIGHT_MEDIUM;
+        else
+            return WEIGHT_HEAVY;
+    }
+
+    double CalculatePullStrength(double weight, double baseStrength, int weightClass)
+    {
+        // Scale pull strength based on weight class
+        double scale = 1.0;
+
+        if (weightClass == WEIGHT_LIGHT)
+            scale = 1.5;  // 50% stronger pull
+        else if (weightClass == WEIGHT_MEDIUM)
+            scale = 1.0;  // Normal pull
+        else if (weightClass == WEIGHT_HEAVY)
+            scale = 0.5;  // 50% weaker pull
+
+        return baseStrength * scale;
+    }
+
+    void ApplyPullToPlayer(Actor player, Vector3 targetPos, double strength)
+    {
+        if (!player)
+            return;
+
+        // Calculate direction and distance
+        double dx = targetPos.x - player.pos.x;
+        double dy = targetPos.y - player.pos.y;
+        double dist = sqrt(dx * dx + dy * dy);
+        double angle = atan2(dy, dx);
+        double zDiff = targetPos.z - player.pos.z;
+
+        // Apply additive acceleration (preserves momentum)
+        double pullForce = (dist / 12.0) * strength;
+        player.Vel.X += cos(angle) * pullForce;
+        player.Vel.Y += sin(angle) * pullForce;
+        player.Vel.Z += (zDiff / 12.0) * strength;
+
+        // Apply speed cap to prevent infinite acceleration
+        PlayerInfo pInfo = player.player;
+        if (pInfo)
+        {
+            CVar maxSpeedCVar = CVar.GetCVar('grapplez_player_max_speed', pInfo);
+            double maxSpeed = maxSpeedCVar ? maxSpeedCVar.GetFloat() : 50.0;
+
+            double currentSpeed = sqrt(player.Vel.X * player.Vel.X + player.Vel.Y * player.Vel.Y + player.Vel.Z * player.Vel.Z);
+            if (currentSpeed > maxSpeed)
+            {
+                double scale = maxSpeed / currentSpeed;
+                player.Vel.X *= scale;
+                player.Vel.Y *= scale;
+                player.Vel.Z *= scale;
+            }
+        }
+    }
+
+    void ApplyPullToEnemy(Actor enemy, Vector3 targetPos, double strength)
+    {
+        if (!enemy)
+            return;
+
+        // Calculate direction and distance
+        double dx = targetPos.x - enemy.pos.x;
+        double dy = targetPos.y - enemy.pos.y;
+        double dist = sqrt(dx * dx + dy * dy);
+        double angle = atan2(dy, dx);
+
+        // Use enemy's center height for Z calculation to avoid vibration
+        double enemyCenterZ = enemy.pos.z + (enemy.height * 0.5);
+        double playerCenterZ = targetPos.z + 32; // Approximate player center
+        double zDiff = playerCenterZ - enemyCenterZ;
+
+        // Apply acceleration-based pulling (same physics as player pull)
+        double pullForce = (dist / 12.0) * strength;
+
+        // Temporarily disable gravity so AI doesn't fight the pull
+        bool hadNoGravity = enemy.bNOGRAVITY;
+        enemy.bNOGRAVITY = true;
+
+        // Build up velocity for acceleration effect
+        enemy.Vel.X += cos(angle) * pullForce;
+        enemy.Vel.Y += sin(angle) * pullForce;
+        enemy.Vel.Z += (zDiff / 12.0) * strength;
+
+        // Get max speed from CVar
+        CVar maxSpeedCVar = CVar.GetCVar('grapplez_enemy_max_speed', players[consoleplayer]);
+        double maxSpeed = maxSpeedCVar ? maxSpeedCVar.GetFloat() : 30.0;
+
+        // Apply speed cap
+        double currentSpeed = sqrt(enemy.Vel.X * enemy.Vel.X + enemy.Vel.Y * enemy.Vel.Y + enemy.Vel.Z * enemy.Vel.Z);
+        if (currentSpeed > maxSpeed)
+        {
+            double scale = maxSpeed / currentSpeed;
+            enemy.Vel.X *= scale;
+            enemy.Vel.Y *= scale;
+            enemy.Vel.Z *= scale;
+        }
+
+        // Calculate movement for this tick based on velocity
+        double moveX = enemy.Vel.X;
+        double moveY = enemy.Vel.Y;
+        double moveZ = enemy.Vel.Z;
+
+        // Calculate target position
+        Vector3 newPos = (enemy.pos.x + moveX, enemy.pos.y + moveY, enemy.pos.z + moveZ);
+
+        // Check if path is blocked by geometry
+        // Use line tracing to detect walls instead of TryMove (which uses AI)
+        FLineTraceData trace;
+        bool pathClear = enemy.LineTrace(
+            atan2(moveY, moveX) * (180.0 / 3.14159265),  // Convert to degrees
+            sqrt(moveX * moveX + moveY * moveY),          // Distance
+            0,                                             // Pitch (horizontal check)
+            TRF_SOLIDACTORS | TRF_BLOCKUSE,               // Check solid geometry
+            offsetz: enemy.height * 0.5,                   // Trace from center
+            data: trace
+        );
+
+        // If blocked by wall, don't move horizontally but allow falling
+        if (!pathClear && trace.HitType == TRACE_HitWall)
+        {
+            // Hit a wall - stop horizontal movement but allow Z movement
+            enemy.Vel.X *= 0.3;
+            enemy.Vel.Y *= 0.3;
+            newPos.x = enemy.pos.x + enemy.Vel.X;
+            newPos.y = enemy.pos.y + enemy.Vel.Y;
+        }
+
+        // Directly set position (bypasses AI, respects our movement)
+        enemy.SetOrigin(newPos, true);
+
+        // Restore gravity state if it wasn't originally set
+        if (!hadNoGravity)
+            enemy.bNOGRAVITY = false;
+    }
+
+    void CancelHook(int pNum)
+    {
+        // Console.Printf("GrappleZ: Cancel hook called");
+        Actor hook = playerHooks[pNum];
+        if (hook && !hook.bDESTROYED)
+        {
+            hook.Destroy();
+        }
+
+        // Clean up trail
+        DestroyTrailActors(pNum);
+
+        playerHookStates[pNum] = HOOK_IDLE;
+        playerHooks[pNum] = null;
+    }
+
+    void DetachHook(int pNum)
+    {
+        // Console.Printf("GrappleZ: DetachHook called - returning to IDLE");
+
+        // Destroy the hook actor if it still exists
+        Actor hook = playerHooks[pNum];
+        if (hook && !hook.bDESTROYED)
+        {
+            // Console.Printf("GrappleZ: Destroying hook actor");
+            hook.Destroy();
+        }
+
+        // Clean up trail
+        DestroyTrailActors(pNum);
+
+        playerHookStates[pNum] = HOOK_IDLE;
+        playerHooks[pNum] = null;
+    }
+
+    // Called by HookShot when it latches
+    void NotifyHookLatched(int pNum, Actor hook)
+    {
+        if (pNum >= 0 && pNum < MAXPLAYERS)
+        {
+            playerHookStates[pNum] = HOOK_LATCHED;
+            playerHooks[pNum] = hook;
+            // Console.Printf("GrappleZ: Hook latched, state = LATCHED");
+
+            // Spawn visual trail actors
+            SpawnTrailActors(pNum);
+        }
+    }
+
+    void SpawnTrailActors(int pNum)
+    {
+        // Clean up any existing trail first
+        DestroyTrailActors(pNum);
+
+        // Spawn new trail actors
+        for (int i = 0; i < TRAIL_COUNT; i++)
+        {
+            Actor trail = Actor.Spawn("HookTrail", (0, 0, 0));
+            if (trail)
+            {
+                int idx = GetTrailIndex(pNum, i);
+                allTrails[idx] = trail;
+            }
+        }
+        // Console.Printf("GrappleZ: Spawned %d trail actors", TRAIL_COUNT);
+    }
+
+    void DestroyTrailActors(int pNum)
+    {
+        if (pNum < 0 || pNum >= MAXPLAYERS)
+            return;
+
+        for (int i = 0; i < TRAIL_COUNT; i++)
+        {
+            int idx = GetTrailIndex(pNum, i);
+            if (idx >= allTrails.Size())
+                continue;
+
+            Actor trail = allTrails[idx];
+            if (trail && !trail.bDESTROYED)
+            {
+                trail.Destroy();
+            }
+            allTrails[idx] = null;
+        }
+    }
+
+    void UpdateTrailPositions(int pNum, Actor player, Actor hook)
+    {
+        if (pNum < 0 || pNum >= MAXPLAYERS)
+            return;
+
+        if (!player || !hook)
+            return;
+
+        // Calculate vector from player to hook
+        Vector3 playerPos = player.pos + (0, 0, player.height * 0.5);  // Player center
+        Vector3 hookPos = hook.pos;
+
+        double dx = hookPos.x - playerPos.x;
+        double dy = hookPos.y - playerPos.y;
+        double dz = hookPos.z - playerPos.z;
+        double totalDist = sqrt(dx * dx + dy * dy + dz * dz);
+
+        // Calculate angle for sprite rotation (yaw)
+        double angle = atan2(dy, dx) * (180.0 / 3.14159265);
+
+        // Position each trail actor evenly along the chain
+        for (int i = 0; i < TRAIL_COUNT; i++)
+        {
+            int idx = GetTrailIndex(pNum, i);
+            if (idx >= allTrails.Size())
+                continue;
+
+            Actor trail = allTrails[idx];
+            if (!trail || trail.bDESTROYED)
+                continue;
+
+            // Calculate position along the line (i+1 to avoid placing at player position)
+            double t = double(i + 1) / double(TRAIL_COUNT + 1);
+
+            Vector3 trailPos;
+            trailPos.x = playerPos.x + dx * t;
+            trailPos.y = playerPos.y + dy * t;
+            trailPos.z = playerPos.z + dz * t;
+
+            trail.SetOrigin(trailPos, false);
+            trail.angle = angle;
+        }
+    }
+}
+
+// ============================================================================
+// HOOK SHOOTER - Inventory item that fires the hook
+// ============================================================================
+
+class HookShooter : CustomInventory
+{
+    States
+    {
+        Pickup:
+            TNT1 A 0 A_FireProjectile("HookShot", 0, 0);
+            Stop;
+    }
+}
+
+// ============================================================================
+// HOOK TRAIL - Visual effect actors for the grappling chain
+// ============================================================================
+
+class HookTrail : Actor
+{
+    Default
+    {
+        +NOINTERACTION  // No collision, no physics
+        +NOBLOCKMAP     // Don't add to blockmap
+        +NOGRAVITY      // Don't fall
+        RenderStyle "Translucent";
+        Alpha 0.8;
+    }
+
+    States
+    {
+        Spawn:
+            CCTT A -1;
+            Stop;
+    }
+}
+
+// ============================================================================
+// HOOK SHOT - Grappling Hook Projectile
+// ============================================================================
+
+class HookShot : FastProjectile
+{
+    Actor hookedEnemy;  // Reference to hooked enemy (if any)
+    bool hasLatched;    // Flag to prevent multiple latch events
+
+    Default
+    {
+        Height 14;
+        Radius 10;
+        Projectile;
+        +HITTRACER
+        +PAINLESS
+        MaxTargetRange 10;
+        MaxStepHeight 4;
+        SeeSound "hookshot/fire";
+        ActiveSound "hookshot/swish";
+        Speed 40;
+        Damage 0;
+    }
+
+    States
+    {
+        Spawn:
+            OCLW AAAAAAAAAA 2 A_PlaySound("hookshot/loop", CHAN_BODY);
+            Loop;
+
+        Crash:
+            CCLW A 0 A_PlaySound("hookshot/hit/terrain");
+            CCLW A 0 A_HookLatch(false);
+            Goto Latched;
+
+        XDeath:
+            CCLW A 0 A_PlaySound("hookshot/hit/flesh");
+            CCLW A 0 A_HookLatch(true);
+            Goto Latched;
+
+        Death:
+            CCLW A 0 A_PlaySound("hookshot/hit/terrain");
+            CCLW A 0 A_HookLatch(false);
+            Goto Latched;
+
+        Latched:
+            CCLW A 0 A_StartSound("hookshot/loop", CHAN_BODY, CHANF_LOOPING);
+        LatchLoop:
+            CCLW A 1;
+            Loop;
+    }
+
+    action void A_HookLatch(bool hitEnemy)
+    {
+        // Console.Printf("GrappleZ: A_HookLatch called - hitEnemy=%d", hitEnemy);
+
+        HookShot hook = HookShot(self);
+        if (!hook || hook.hasLatched)
+        {
+            // Console.Printf("GrappleZ: Hook null or already latched");
+            return;
+        }
+
+        hook.hasLatched = true;
+
+        // Stop movement
+        hook.Speed = 0;
+        hook.Vel = (0, 0, 0);
+
+        // Check if we have a tracer (actor we hit), regardless of hitEnemy parameter
+        // This handles cases where projectile has 0 damage and doesn't trigger XDeath
+        if (hook.tracer)
+        {
+            // We hit an actor - check if it's shootable/pullable
+            Actor target = hook.tracer;
+            // Console.Printf("GrappleZ: Tracer found: %s, bSHOOTABLE=%d, bPUSHABLE=%d",
+            //     target.GetClassName(), target.bSHOOTABLE, target.bPUSHABLE);
+
+            // Consider it a valid hookable enemy if it's shootable or pushable
+            if (target.bSHOOTABLE || target.bPUSHABLE)
+            {
+                hook.hookedEnemy = target;
+                // Console.Printf("GrappleZ: Hooked valid target: %s", target.GetClassName());
+            }
+            else
+            {
+                // Console.Printf("GrappleZ: Tracer is not shootable/pushable - treating as terrain");
+            }
+        }
+        else
+        {
+            // Console.Printf("GrappleZ: No tracer - hooked terrain");
+        }
+
+        // Notify handler that we've latched
+        if (hook.target && hook.target.player)
+        {
+            int pNum = hook.target.PlayerNumber();
+            // Console.Printf("GrappleZ: Player number = %d, finding handler", pNum);
+
+            // Find the handler using StaticEventHandler.Find
+            GrappleZHandler handler = GrappleZHandler(StaticEventHandler.Find("GrappleZHandler"));
+
+            if (handler)
+            {
+                // Console.Printf("GrappleZ: Found handler, calling NotifyHookLatched");
+                handler.NotifyHookLatched(pNum, hook);
+            }
+            // else
+            // {
+            //     Console.Printf("GrappleZ: ERROR - Handler not found!");
+            // }
+        }
+        // else
+        // {
+        //     Console.Printf("GrappleZ: ERROR - No target or target has no player");
+        // }
+    }
+}

@@ -1,0 +1,30 @@
+// ============================================================================
+// GRAPPLEZ YOINK - Configuration Variables
+// ============================================================================
+
+// Legacy compatibility
+server bool sv_allowhookshot = true;
+
+// Target filtering (what can be yanked)
+user bool grapplez_yoink_walls = true;        // Allow yanking to walls/terrain
+user bool grapplez_yoink_enemies = true;      // Allow yanking enemies
+user bool grapplez_yoink_items = false;       // Allow yanking items (pickups)
+
+// Pull behavior mode (for enemies)
+user int grapplez_pull_mode = 0;              // 0=Smart, 1=Always Enemy, 2=Always Player
+
+// Weight calculation method
+user int grapplez_weight_calculation = 0;     // 0=By Mass, 1=By Health
+
+// Weight thresholds (for Smart Pull mode with enemies)
+user float grapplez_light_threshold = 550.0;  // Below this = light (fast pull)
+user float grapplez_heavy_threshold = 900.0;  // Above this = heavy (player pulled)
+
+// Pull strength multipliers
+user float grapplez_wall_pull_strength = 1.0;    // Wall pull strength (0.1 to 5.0)
+user float grapplez_enemy_pull_strength = 1.0;   // Enemy pull strength (0.1 to 5.0)
+user float grapplez_item_pull_strength = 1.0;    // Item pull strength (0.1 to 5.0)
+
+// Hook limits
+user float grapplez_max_range = 2048.0;          // Max hook range in map units (512 to 8192)
+user float grapplez_cooldown = 0.8;              // Cooldown between shots in seconds (0.0 to 5.0)

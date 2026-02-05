@@ -1,0 +1,10 @@
+// ============================================================================
+// JEDIPULLZ - Configuration Variables
+// ============================================================================
+
+// Force Pull parameters (Kinesis mode)
+user float jedipullz_pull_strength = 1.5;    // Item pull strength (0.1 to 5.0)
+user float jedipullz_pull_radius = 256.0;    // Pull radius at impact point (64 to 4096)
+user float jedipullz_max_range = 2048.0;     // Max line trace range (256 to 8192)
+user float jedipullz_cooldown = 0.6;         // Cooldown between uses in seconds (0.1 to 10.0)
+user float jedipullz_hud_textscale = 1.0;    // HUD text scale (0.1 to 10.0)

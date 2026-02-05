@@ -1,0 +1,28 @@
+// ============================================================================
+// GRAPPLEZ REEL - Configuration Variables
+// ============================================================================
+
+// Legacy compatibility
+server bool sv_allowhookshot = true;
+
+// Pull behavior mode
+user int grapplez_pull_mode = 0;              // 0=Smart, 1=Always Enemy, 2=Always Player
+
+// Weight calculation method
+user int grapplez_weight_calculation = 0;     // 0=By Mass, 1=By Health
+
+// Weight thresholds (for Smart Pull mode)
+user float grapplez_light_threshold = 550.0;  // Below this = light (fast pull)
+user float grapplez_heavy_threshold = 900.0;  // Above this = heavy (player pulled)
+
+// Pull strength multipliers
+user float grapplez_wall_pull_strength = 0.15;   // Wall pull strength (0.01 to 5.00)
+user float grapplez_enemy_pull_strength = 0.15;  // Enemy pull strength (0.01 to 5.00)
+
+// Pull speed caps
+user float grapplez_player_max_speed = 13.0;     // Max player pull speed (1 to 60)
+user float grapplez_enemy_max_speed = 18.0;      // Max enemy pull speed (1 to 60)
+
+// Hook limits
+user float grapplez_max_range = 2048.0;         // Max hook range in map units (512 to 8192)
+user float grapplez_detach_distance = 64.0;     // Auto-detach distance (32 to 256)

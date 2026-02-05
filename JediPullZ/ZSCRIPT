@@ -1,0 +1,357 @@
+version "4.10.0"
+
+// ============================================================================
+// JEDIPULLZ - Force Pull Item System (Kinesis-Based)
+// ============================================================================
+
+// Event Handler for input, cooldown, and HUD rendering
+class JediPullZHandler : EventHandler
+{
+    // Per-player cooldown tracking
+    Array<double> playerLastPullTime;
+
+    // Per-player HUD message duration tracking
+    Array<int> playerHudDuration;
+
+    override void OnRegister()
+    {
+        // Initialize arrays for all players
+        playerLastPullTime.Clear();
+        playerHudDuration.Clear();
+
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            playerLastPullTime.Push(0.0);
+            playerHudDuration.Push(0);
+        }
+    }
+
+    override void WorldLoaded(WorldEvent e)
+    {
+        // Reset cooldowns and HUD when map loads
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (i < playerLastPullTime.Size())
+            {
+                playerLastPullTime[i] = 0.0;
+                playerHudDuration[i] = 0;
+            }
+        }
+    }
+
+    override void WorldTick()
+    {
+        // Decrement HUD duration counters
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (playerHudDuration[i] > 0)
+            {
+                playerHudDuration[i]--;
+            }
+        }
+    }
+
+    override void RenderOverlay(RenderEvent event)
+    {
+        // Only render for the console player
+        if (players[consolePlayer].mo == NULL)
+            return;
+
+        int pNum = consolePlayer;
+        if (pNum < 0 || pNum >= playerHudDuration.Size())
+            return;
+
+        if (playerHudDuration[pNum] > 0)
+        {
+            // Calculate fade alpha based on remaining duration
+            int maxDuration = 35; // 1 second at 35 fps
+            int fadeTime = 10;    // Fade during last 10 tics
+
+            double alpha = 1.0;
+            if (playerHudDuration[pNum] < fadeTime)
+            {
+                alpha = double(playerHudDuration[pNum]) / fadeTime;
+            }
+
+            // Get text scale from CVAR
+            CVar textScaleCVar = CVar.GetCVar('jedipullz_hud_textscale', players[consolePlayer]);
+            double textScale = textScaleCVar ? textScaleCVar.GetFloat() : 1.0;
+
+            // Get screen dimensions
+            int screenWidth = Screen.GetWidth();
+            int screenHeight = Screen.GetHeight();
+
+            // Use smallfont for text
+            Font textFont = smallfont;
+            String message = "FORCE PULL";
+
+            // Calculate text position - centered horizontally, slightly above center vertically
+            // Account for scale when centering
+            int textWidth = int(textFont.StringWidth(message) * textScale);
+            int textHeight = int(textFont.GetHeight() * textScale);
+            int textX = (screenWidth - textWidth) / 2;
+            int textY = (screenHeight / 2) - 60;
+
+            // Draw the text with cyan color, fade alpha, and scale
+            Screen.DrawText(
+                textFont,
+                Font.CR_CYAN,
+                textX,
+                textY,
+                message,
+                DTA_Alpha, alpha,
+                DTA_ScaleX, textScale,
+                DTA_ScaleY, textScale
+            );
+        }
+    }
+
+    override void NetworkProcess(ConsoleEvent e)
+    {
+        if (e.Name == "jedipullz_activate")
+        {
+            if (!playeringame[e.Player])
+                return;
+
+            PlayerInfo player = players[e.Player];
+            if (!player || !player.mo)
+                return;
+
+            // Check cooldown
+            CVar cooldownCVar = CVar.GetCVar('jedipullz_cooldown', player);
+            double cooldownSeconds = cooldownCVar ? cooldownCVar.GetFloat() : 0.6;
+
+            double currentTime = double(level.totaltime) / 35.0; // Convert tics to seconds
+            double lastPullTime = playerLastPullTime[e.Player];
+            double timeSincePull = currentTime - lastPullTime;
+
+            if (timeSincePull < cooldownSeconds)
+            {
+                // Still on cooldown
+                return;
+            }
+
+            // Update last pull time
+            playerLastPullTime[e.Player] = currentTime;
+
+            // Show HUD message for 35 tics (1 second)
+            playerHudDuration[e.Player] = 35;
+
+            // Play Force Pull sound
+            player.mo.A_StartSound("forcepull/activate", CHAN_AUTO, CHANF_DEFAULT, 1.0);
+
+            // Perform incremental line trace to find target point
+            Actor playerActor = player.mo;
+            FLineTraceData shot;
+
+            // Get max range from CVAR
+            CVar maxRangeCVar = CVar.GetCVar('jedipullz_max_range', player);
+            double maxRange = maxRangeCVar ? maxRangeCVar.GetFloat() : 3072.0;
+
+            // Get pull radius from CVAR
+            CVar radiusCVar = CVar.GetCVar('jedipullz_pull_radius', player);
+            double pullRadius = radiusCVar ? radiusCVar.GetFloat() : 256.0;
+
+            // Perform incremental line trace to find nearest items
+            int kinesis_distance = 32;
+            bool foundItems = false;
+            JediPullKinesisBlast blast = null;
+
+            while (kinesis_distance < maxRange)
+            {
+                playerActor.LineTrace(
+                    playerActor.angle,
+                    kinesis_distance,
+                    playerActor.pitch,
+                    TRF_THRUACTORS | TRF_THRUHITSCAN,
+                    playerActor.height - 12,
+                    0, 0,
+                    shot
+                );
+
+                // Spawn blast at this location
+                blast = JediPullKinesisBlast(Actor.Spawn('JediPullKinesisBlast', shot.HitLocation));
+                if (blast)
+                {
+                    blast.target = playerActor;
+                    blast.GetRadialActors(pullRadius);
+
+                    if (blast.list.Size() > 0)
+                    {
+                        // Found items! Start pulling
+                        blast.startPulling = true;
+                        foundItems = true;
+                        break;
+                    }
+                    else
+                    {
+                        // No items at this distance, destroy and continue
+                        blast.Destroy();
+                        blast = null;
+                    }
+                }
+
+                kinesis_distance += 32;
+            }
+
+            // If no items found after all traces, ensure blast is destroyed
+            if (!foundItems && blast)
+            {
+                blast.Destroy();
+            }
+        }
+    }
+}
+
+// Kinesis blast actor that pulls items using damped spring physics
+class JediPullKinesisBlast : Actor
+{
+    Array<Actor> list;
+    bool startPulling;
+
+    Default
+    {
+        +NOINTERACTION
+        +NOGRAVITY
+        RenderStyle "None";
+    }
+
+    void GetRadialActors(double radius)
+    {
+        list.Clear();
+
+        if (!target)
+            return;
+
+        Actor playerActor = target;
+
+        // Iterate through all actors
+        ThinkerIterator it = ThinkerIterator.Create("Actor");
+        Actor mo;
+
+        while ((mo = Actor(it.Next())))
+        {
+            // Must be an inventory item
+            if (!(mo is "Inventory"))
+                continue;
+
+            Inventory item = Inventory(mo);
+
+            // Skip if already owned by someone
+            if (item.Owner)
+                continue;
+
+            // Check distance to blast impact point
+            if (Distance3D(mo) > radius)
+                continue;
+
+            // Skip items too close to player (already in pickup range)
+            if (playerActor.Distance2D(mo) <= 64)
+                continue;
+
+            // Line of sight check - ensure item can "see" the impact point
+            if (!mo.CheckSight(self))
+                continue;
+
+            // Line of sight check - ensure player can see the item
+            if (!playerActor.CheckSight(mo))
+                continue;
+
+            // Valid item - add to pull list
+            list.Push(mo);
+        }
+    }
+
+    void ReturnToSender()
+    {
+        if (!target)
+        {
+            Destroy();
+            return;
+        }
+
+        Actor playerActor = target;
+
+        // Get pull strength from player's CVAR
+        double strength = 2.0;
+        if (playerActor.player)
+        {
+            CVar strengthCVar = CVar.GetCVar('jedipullz_pull_strength', playerActor.player);
+            if (strengthCVar)
+                strength = strengthCVar.GetFloat();
+        }
+
+        for (int i = 0; i < list.Size(); ++i)
+        {
+            if (!list[i] || list[i].bDESTROYED)
+            {
+                list.Delete(i--);
+                list.ShrinkToFit();
+                continue;
+            }
+
+            Actor victim = list[i];
+
+            // Enable NoClip for smooth pulling through geometry
+            if (Inventory(victim))
+            {
+                Inventory(victim).bNoClip = true;
+            }
+
+            // Apply damped spring physics every other tic for performance
+            if (gametic % 2 == 0)
+            {
+                double spring = 0.2 * strength;
+                double dampening = 0.2;
+
+                double velx = DampedSpring(victim.pos.x, playerActor.pos.x, victim.vel.x, spring, dampening);
+                double vely = DampedSpring(victim.pos.y, playerActor.pos.y, victim.vel.y, spring, dampening);
+                double velz = DampedSpring(victim.pos.z, playerActor.pos.z + (playerActor.height * 0.5), victim.vel.z, spring, dampening);
+
+                victim.vel = (velx, vely, velz);
+
+                // Check if item reached player
+                if (playerActor.Distance3D(victim) <= 64)
+                {
+                    // Attempt pickup
+                    if (Inventory(victim) && !victim.bDestroyed)
+                    {
+                        playerActor.Touch(victim);
+                    }
+
+                    // Remove from list
+                    if (victim)
+                    {
+                        victim.bNoClip = false;
+                        victim.vel = (0, 0, 0);
+                    }
+
+                    list.Delete(i);
+                    list.ShrinkToFit();
+                }
+            }
+        }
+    }
+
+    // Damped spring physics function
+    // Returns acceleration based on position difference and current velocity
+    double DampedSpring(double p, double r, double v, double k, double d)
+    {
+        return -(d * v) - (k * (p - r));
+    }
+
+    States
+    {
+        Spawn:
+            TNT1 A 1
+            {
+                if (invoker.startPulling)
+                    invoker.ReturnToSender();
+
+                // Destroy when no items left to pull
+                if (invoker.list.Size() == 0)
+                    invoker.Destroy();
+            }
+            Loop;
+    }
+}

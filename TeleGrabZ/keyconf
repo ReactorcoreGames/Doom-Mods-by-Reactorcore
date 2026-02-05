@@ -1,0 +1,7 @@
+// ============================================================================
+// TELEGRABZ - Key Binding Configuration
+// ============================================================================
+
+AddKeySection "TeleGrabZ" TeleGrabZ
+AddMenuKey "Tele Grab Items" tele_grab
+alias tele_grab "netevent telegrabz_activate"

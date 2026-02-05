@@ -1,0 +1,7 @@
+// ============================================================================
+// GRAPPLEZ YOINK - Key Binding Configuration
+// ============================================================================
+
+AddKeySection "GrappleZ" GrappleZ
+AddMenuKey "Fire Grapple Hook" grapple_fire
+alias grapple_fire "netevent grapplez_yoink_fire"

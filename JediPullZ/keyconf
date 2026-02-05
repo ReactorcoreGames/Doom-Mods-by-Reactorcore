@@ -1,0 +1,7 @@
+// ============================================================================
+// JEDIPULLZ - Key Binding Configuration
+// ============================================================================
+
+AddKeySection "JediPullZ" JediPullZ
+AddMenuKey "Force Pull Items" force_pull
+alias force_pull "netevent jedipullz_activate"

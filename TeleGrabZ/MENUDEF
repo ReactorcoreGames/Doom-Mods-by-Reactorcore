@@ -1,0 +1,40 @@
+// ============================================================================
+// TELEGRABZ - Options Menu Definition
+// ============================================================================
+
+AddOptionMenu "OptionsMenu"
+{
+    Submenu "TeleGrabZ Options", "TeleGrabZ_Options"
+}
+
+ OptionMenu "TeleGrabZ_Options"
+{
+    Title "TeleGrabZ Options"
+
+    StaticText ""
+    StaticText "Tele Grab Parameters (Teleport Mode)", 1
+    StaticText ""
+
+    Slider "Pull Radius", "telegrabz_pull_radius", 128, 8192, 64, 0
+    StaticText "  Radius around you where items are teleported from", "White"
+
+    StaticText ""
+    Slider "Field of View", "telegrabz_fov_angle", 10, 360, 10, 0
+    StaticText "  Angle for item detection (360 = all directions)", "White"
+
+    StaticText ""
+    Slider "Cooldown (seconds)", "telegrabz_cooldown", 0.1, 10.0, 0.1, 1
+    StaticText "  Time between Tele Grab uses", "White"
+
+    StaticText ""
+    Slider "HUD Text Scale", "telegrabz_hud_textscale", 0.1, 10.0, 0.1, 1
+    StaticText "  Scale of the 'TELE GRAB' HUD message", "White"
+
+    StaticText ""
+    StaticText "Usage", 1
+    StaticText ""
+    StaticText "Press Tele Grab key to teleport items to you", "White"
+    StaticText "Pulls items within FOV cone and radius", "White"
+    StaticText "FOV applies to both horizontal and vertical", "White"
+    StaticText "Bind key: Controls > Customize Controls > TeleGrabZ", "White"
+}

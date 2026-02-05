@@ -1,0 +1,35 @@
+// ============================================================================
+// MonsterFallDamageZ - ZScript Entry Point
+// ============================================================================
+// Version 4.10.0
+//
+// This mod applies gradual fall damage (Hexen model) to all monsters
+// Player is immune and unaffected
+// ============================================================================
+
+version "4.10.0"
+
+class MonsterFallDamageHandler : EventHandler
+{
+    // ========================================================================
+    // WorldThingSpawned - Apply fall damage flags to monsters
+    // ========================================================================
+    override void WorldThingSpawned(WorldEvent e)
+    {
+        // Skip if no actor spawned
+        if (!e.Thing)
+            return;
+
+        // Skip players entirely - they remain unaffected
+        if (e.Thing.player)
+            return;
+
+        // Check if this is a monster
+        if (e.Thing.bISMONSTER)
+        {
+            // Enable fall damage for this monster
+            // FALLDAMAGE flag allows monsters to take falling damage
+            e.Thing.bFALLDAMAGE = true;
+        }
+    }
+}

@@ -1,0 +1,246 @@
+version "4.10.0"
+
+// ============================================================================
+// TELEGRABZ - Teleport Grab Item System (Area/Radius Mode)
+// ============================================================================
+
+class TeleGrabZHandler : EventHandler
+{
+    // Per-player cooldown tracking
+    Array<double> playerLastPullTime;
+
+    // Per-player HUD message duration tracking
+    Array<int> playerHudDuration;
+
+    override void OnRegister()
+    {
+        // Initialize arrays for all players
+        playerLastPullTime.Clear();
+        playerHudDuration.Clear();
+
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            playerLastPullTime.Push(0.0);
+            playerHudDuration.Push(0);
+        }
+    }
+
+    override void WorldLoaded(WorldEvent e)
+    {
+        // Reset cooldowns and HUD when map loads
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (i < playerLastPullTime.Size())
+            {
+                playerLastPullTime[i] = 0.0;
+                playerHudDuration[i] = 0;
+            }
+        }
+    }
+
+    override void WorldTick()
+    {
+        // Decrement HUD duration counters
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (playerHudDuration[i] > 0)
+            {
+                playerHudDuration[i]--;
+            }
+        }
+    }
+
+    override void RenderOverlay(RenderEvent event)
+    {
+        // Only render for the console player
+        if (players[consolePlayer].mo == NULL)
+            return;
+
+        int pNum = consolePlayer;
+        if (pNum < 0 || pNum >= playerHudDuration.Size())
+            return;
+
+        if (playerHudDuration[pNum] > 0)
+        {
+            // Calculate fade alpha based on remaining duration
+            int maxDuration = 35; // 1 second at 35 fps
+            int fadeTime = 10;    // Fade during last 10 tics
+
+            double alpha = 1.0;
+            if (playerHudDuration[pNum] < fadeTime)
+            {
+                alpha = double(playerHudDuration[pNum]) / fadeTime;
+            }
+
+            // Get text scale from CVAR
+            CVar textScaleCVar = CVar.GetCVar('telegrabz_hud_textscale', players[consolePlayer]);
+            double textScale = textScaleCVar ? textScaleCVar.GetFloat() : 1.0;
+
+            // Get screen dimensions
+            int screenWidth = Screen.GetWidth();
+            int screenHeight = Screen.GetHeight();
+
+            // Use smallfont for text
+            Font textFont = smallfont;
+            String message = "TELE GRAB";
+
+            // Calculate text position - centered horizontally, slightly above center vertically
+            // Account for scale when centering
+            int textWidth = int(textFont.StringWidth(message) * textScale);
+            int textHeight = int(textFont.GetHeight() * textScale);
+            int textX = (screenWidth - textWidth) / 2;
+            int textY = (screenHeight / 2) - 60;
+
+            // Draw the text with green color, fade alpha, and scale
+            Screen.DrawText(
+                textFont,
+                Font.CR_GREEN,
+                textX,
+                textY,
+                message,
+                DTA_Alpha, alpha,
+                DTA_ScaleX, textScale,
+                DTA_ScaleY, textScale
+            );
+        }
+    }
+
+    override void NetworkProcess(ConsoleEvent e)
+    {
+        if (e.Name == "telegrabz_activate")
+        {
+            if (!playeringame[e.Player])
+                return;
+
+            PlayerInfo player = players[e.Player];
+            if (!player || !player.mo)
+                return;
+
+            // Check cooldown
+            CVar cooldownCVar = CVar.GetCVar('telegrabz_cooldown', player);
+            double cooldownSeconds = cooldownCVar ? cooldownCVar.GetFloat() : 0.5;
+
+            double currentTime = double(level.totaltime) / 35.0; // Convert tics to seconds
+            double lastPullTime = playerLastPullTime[e.Player];
+            double timeSincePull = currentTime - lastPullTime;
+
+            if (timeSincePull < cooldownSeconds)
+            {
+                // Still on cooldown
+                return;
+            }
+
+            // Update last pull time
+            playerLastPullTime[e.Player] = currentTime;
+
+            // Show HUD message for 35 tics (1 second)
+            playerHudDuration[e.Player] = 35;
+
+            // Play Tele Grab sound
+            player.mo.A_StartSound("forcepull/activate", CHAN_AUTO, CHANF_DEFAULT, 1.0);
+
+            // Execute Tele Grab
+            ActivateTeleGrab(player, player.mo);
+        }
+    }
+
+    void ActivateTeleGrab(PlayerInfo player, Actor playerActor)
+    {
+        if (!playerActor)
+            return;
+
+        // Get pull parameters from CVARs
+        CVar radiusCVar = CVar.GetCVar('telegrabz_pull_radius', player);
+        double pullRadius = radiusCVar ? radiusCVar.GetFloat() : 512.0;
+
+        CVar fovCVar = CVar.GetCVar('telegrabz_fov_angle', player);
+        double fovAngle = fovCVar ? fovCVar.GetFloat() : 360.0;
+
+        // Calculate half-angles for checking
+        // Both horizontal and vertical FOV use the same angle setting
+        double halfHorizontalFOV = fovAngle / 2.0;
+        double halfVerticalFOV = fovAngle / 2.0;
+
+        // Search for items in radius around player
+        BlockThingsIterator it = BlockThingsIterator.Create(playerActor, pullRadius);
+        Actor mo;
+
+        while (it.Next())
+        {
+            mo = it.thing;
+            if (!mo || mo.bDESTROYED)
+                continue;
+
+            // Check if this is an item (Inventory)
+            if (!(mo is "Inventory"))
+                continue;
+
+            // Skip if it's already been picked up or is not available
+            Inventory item = Inventory(mo);
+            if (!item || item.Owner)
+                continue; // Already owned by someone
+
+            // Double-check distance is within radius
+            double distToPlayer = mo.Distance3D(playerActor);
+            if (distToPlayer > pullRadius)
+                continue;
+
+            // Only pull items we can actually see (line of sight check)
+            if (!playerActor.CheckSight(mo))
+                continue;
+
+            // FOV check - only pull items within field of view
+            if (fovAngle < 360.0) // Only check if not full 360
+            {
+                // Horizontal angle check
+                double angleToItem = playerActor.AngleTo(mo);
+                double angleDiff = Actor.deltaangle(playerActor.angle, angleToItem);
+
+                if (abs(angleDiff) > halfHorizontalFOV)
+                    continue; // Item is outside horizontal FOV
+
+                // Vertical angle check (pitch)
+                // In GZDoom: positive pitch = looking DOWN, negative = looking UP
+                double verticalDist = mo.pos.z - (playerActor.pos.z + playerActor.height * 0.5);
+                double horizontalDist = playerActor.Distance2D(mo);
+                double pitchToItem = -atan2(verticalDist, horizontalDist); // Negate to match GZDoom pitch convention
+                double pitchDiff = abs(playerActor.pitch - pitchToItem);
+
+                if (pitchDiff > halfVerticalFOV)
+                    continue; // Item is outside vertical FOV
+            }
+
+            // Spawn green particle effect at item's location
+            Actor puff = Actor.Spawn("TeleGrabPuff", mo.pos);
+            if (puff)
+            {
+                puff.A_StartSound("misc/teleport", CHAN_BODY, CHANF_DEFAULT, 0.5);
+            }
+
+            // Teleport item directly to player
+            mo.SetOrigin(playerActor.pos + (0, 0, playerActor.height * 0.5), true);
+            mo.Vel = (0, 0, 0); // Zero out velocity
+            mo.bDROPPED = true; // Allow pickup
+        }
+    }
+}
+
+// Visual effect for item teleportation
+class TeleGrabPuff : Actor
+{
+    Default
+    {
+        +NOINTERACTION
+        +NOBLOCKMAP
+        RenderStyle "Add";
+        Alpha 0.8;
+        Scale 0.5;
+    }
+
+    States
+    {
+        Spawn:
+            TFOG ABABCDEFGHIJ 2 Bright;
+            Stop;
+    }
+}

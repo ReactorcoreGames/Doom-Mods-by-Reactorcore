@@ -1,0 +1,7 @@
+// ============================================================================
+// GRAPPLEZ REEL - Key Binding Configuration
+// ============================================================================
+
+AddKeySection "GrappleZ Reel" GrappleZ_Reel
+AddMenuKey "Fire/Cancel Grapple Hook" grapple_toggle
+alias grapple_toggle "netevent grapplez_toggle"

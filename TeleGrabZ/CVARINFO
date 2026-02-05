@@ -1,0 +1,9 @@
+// ============================================================================
+// TELEGRABZ - Configuration Variables
+// ============================================================================
+
+// Tele Grab parameters (Teleport-to-player mode)
+user float telegrabz_pull_radius = 1024.0;    // Pull radius around player (128 to 8192)
+user float telegrabz_cooldown = 0.5;         // Cooldown between uses in seconds (0.1 to 10.0)
+user float telegrabz_fov_angle = 90.0;      // Field of view angle for item detection (10 to 360)
+user float telegrabz_hud_textscale = 1.0;  // HUD text scale (0.1 to 10.0)

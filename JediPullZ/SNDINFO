@@ -1,0 +1,6 @@
+// ============================================================================
+// JEDIPULLZ - Sound Definitions
+// ============================================================================
+
+$random forcepull/activate { forcepull/whoosh }
+forcepull/whoosh WHOOSHA

@@ -1,0 +1,43 @@
+// ============================================================================
+// JEDIPULLZ - Options Menu Definition
+// ============================================================================
+
+AddOptionMenu "OptionsMenu"
+{
+    Submenu "JediPullZ Options", "JediPullZ_Options"
+}
+
+ OptionMenu "JediPullZ_Options"
+{
+    Title "JediPullZ Options"
+
+    StaticText ""
+    StaticText "Force Pull Parameters (Kinesis Mode)", 1
+    StaticText ""
+
+    Slider "Pull Strength", "jedipullz_pull_strength", 0.1, 5.0, 0.1, 1
+    StaticText "  How strongly items are pulled toward you", "White"
+
+    StaticText ""
+    Slider "Pull Radius", "jedipullz_pull_radius", 64, 4096, 16, 0
+    StaticText "  Radius at impact point where items are pulled", "White"
+
+    StaticText ""
+    Slider "Max Range", "jedipullz_max_range", 256, 8192, 128, 0
+    StaticText "  Maximum line trace range before giving up", "White"
+
+    StaticText ""
+    Slider "Cooldown (seconds)", "jedipullz_cooldown", 0.1, 10.0, 0.1, 1
+    StaticText "  Time between Force Pull uses", "White"
+
+    StaticText ""
+    Slider "HUD Text Scale", "jedipullz_hud_textscale", 0.1, 10.0, 0.1, 1
+    StaticText "  Scale of the 'FORCE PULL' HUD message", "White"
+
+    StaticText ""
+    StaticText "Usage", 1
+    StaticText ""
+    StaticText "Press Force Pull key to pull items toward you", "White"
+    StaticText "Pulls items at aimed-at point within radius", "White"
+    StaticText "Bind key: Controls > Customize Controls > JediPullZ", "White"
+}

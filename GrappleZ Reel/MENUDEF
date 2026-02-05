@@ -1,0 +1,79 @@
+// ============================================================================
+// GRAPPLEZ REEL - Options Menu Definition
+// ============================================================================
+
+AddOptionMenu "OptionsMenu"
+{
+    Submenu "GrappleZ Reel Options", "GrappleZ_Reel_Options"
+}
+
+OptionValue "GrappleZ_PullMode"
+{
+    0, "Smart Pull"
+    1, "Always Pull Enemy"
+    2, "Always Pull Player"
+}
+
+OptionValue "GrappleZ_WeightCalc"
+{
+    0, "By Actor Mass"
+    1, "By Actor Health"
+}
+
+OptionMenu "GrappleZ_Reel_Options"
+{
+    Title "GrappleZ Reel Options"
+
+    StaticText ""
+    StaticText "Enemy Pull Behavior", 1
+    StaticText ""
+
+    Option "Pull Mode", "grapplez_pull_mode", "GrappleZ_PullMode"
+    StaticText "  Smart: Light enemies to you, heavy = you to them", "White"
+    StaticText "  Always Enemy: Pull all enemies toward you", "White"
+    StaticText "  Always Player: Always pull yourself to target", "White"
+
+    StaticText ""
+    Option "Weight Calculation", "grapplez_weight_calculation", "GrappleZ_WeightCalc"
+
+    StaticText ""
+    StaticText "Weight Thresholds (Smart Pull Only)", 1
+    StaticText ""
+
+    Slider "Light Threshold", "grapplez_light_threshold", 100, 10000, 50, 0
+    StaticText "  Below threshold = fast pull to player", "White"
+    Slider "Heavy Threshold", "grapplez_heavy_threshold", 100, 10000, 50, 0
+    StaticText "  Above threshold = player pulled to enemy", "White"
+
+    StaticText ""
+    StaticText "Pull Strength", 1
+    StaticText ""
+
+    Slider "Wall Pull Strength", "grapplez_wall_pull_strength", 0.01, 5.00, 0.01, 1
+    Slider "Enemy Pull Strength", "grapplez_enemy_pull_strength", 0.01, 5.00, 0.01, 1
+
+    StaticText ""
+    StaticText "Speed Caps", 1
+    StaticText ""
+
+    Slider "Player Max Speed", "grapplez_player_max_speed", 1, 60, 1, 0
+    StaticText "  Maximum speed when being pulled", "White"
+    Slider "Enemy Max Speed", "grapplez_enemy_max_speed", 1, 60, 1, 0
+    StaticText "  Maximum speed when pulling enemies", "White"
+
+    StaticText ""
+    StaticText "Hook Limits", 1
+    StaticText ""
+
+    Slider "Max Range", "grapplez_max_range", 512, 8192, 128, 0
+    StaticText "  Hook despawns beyond this distance", "White"
+    Slider "Detach Distance", "grapplez_detach_distance", 32, 256, 8, 0
+    StaticText "  Hook releases when this close to target", "White"
+
+    StaticText ""
+    StaticText "Usage", 1
+    StaticText ""
+    StaticText "Press grapple key to fire hook", "White"
+    StaticText "Press again to cancel while latched", "White"
+    StaticText "Bind key: Controls > Customize Controls > GrappleZ Reel", "White"
+}
